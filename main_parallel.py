@@ -4,6 +4,7 @@ from classifiers.dna_classifier_basic import DNAClassifier
 from classifiers.dna_classifier_back_bone import CNNBackbone, ResBlock
 from classifiers.rank_classifier import RankClassifer, RankClassiferEnd, RankClassiferCosine
 from dnabert_embedder import DNABERTEmbedder
+from build_classifier import get_model_config, build_model
 from train_classifier import train_basic_classifier
 import torch
 import torch.distributed as dist
@@ -28,42 +29,6 @@ def get_number_classes_by_rank(ranks_to_label):
     
     return number_of_classes
 
-#####################################################################
-
-def build_classifiers(config_classifiers):
-    
-    classifiers = []
-    
-    for config_rank_classifier in config_classifiers:
-
-        classification_end = config_rank_classifier["classification_end"]
-        num_classes = config_rank_classifier["num_classes"]
-        loss_weight = math.log(num_classes) * 2
-        classification_in_features = config_rank_classifier["classification_in_features"]
-
-        classifiers.append(RankClassifer(classification_in_features,
-                                              classification_end,
-                                              num_classes,
-                                              loss_weight))
-
-    return classifiers
-
-def build_model(config):
-
-    config_embedder = config["config_embedder"]
-    config_backbone = config["config_backbone"]
-    config_classifiers = config["config_classifiers"]
-    config_dnaClassifier = config["dnaClassifier_config"]
-
-    embedder = DNABERTEmbedder(config_embedder["path"], max_length=config_embedder["max_length"])    
-    cnnBackbone = CNNBackbone(config_backbone)
-    classifiers = build_classifiers(config_classifiers)
-
-    return DNAClassifier(embedder, cnnBackbone, classifiers, config_dnaClassifier)
-
-#################################################################
-
-
 def main():
 
     os.environ["TOKENIZERS_PARALLELISM"] = "false"
@@ -77,46 +42,7 @@ def main():
     print(f"  Test: {len(X_test)}")
     print(f"  Classes: {number_of_classes}")
 
-    backbone_config = {
-        "first_channel_size" : 4,
-        "deepness" : 3,
-        "tmp_channels": 512,
-    }
-
-    embedder_config = {
-        "path" : "DNABERT-2-117M",
-        "max_length" : 900
-    }
-
-    config_classifiers = []
-    in_features = 768
-    
-    for num_class in number_of_classes:
-        
-        if num_class > 1000: 
-            classifier_end = RankClassiferCosine(in_features, num_class)
-        else:
-            classifier_end = RankClassiferEnd(in_features, num_class)
-
-        rank_classifier = {
-                            "classification_end" : classifier_end,
-                            "num_classes" :  num_class,
-                            "classification_in_features" : in_features
-                          }
-        
-        config_classifiers.append(rank_classifier)
-
-    dnaClassifier_config = {
-        "tmp_channel" : 768,
-        "deepness" : 3
-    }
-
-    model_configuration = {
-        "config_backbone" : backbone_config,
-        "config_embedder" : embedder_config,
-        "config_classifiers" : config_classifiers,
-        "dnaClassifier_config" : dnaClassifier_config
-    }
+    model_configuration = get_model_config(number_of_classes)
 
     training_config = {
         "batch_size" : 64,
@@ -140,15 +66,19 @@ def main():
         "eps": 1e-8
     }   
 
+    max_length = model_configuration["config_embedder"]["max_length"]
+
     # Create datasets
-    train_dataset = FastaDataset(X_train, y_train, max_length=embedder_config["max_length"])
-    val_dataset = FastaDataset(X_val, y_val, max_length=embedder_config["max_length"])
+    train_dataset = FastaDataset(X_train, y_train, max_length=max_length)
+    val_dataset = FastaDataset(X_val, y_val, max_length=max_length)
 
     train_loader = DataLoader(train_dataset, batch_size=training_config["batch_size"], shuffle=True, collate_fn=pre_process_batch)
     val_loader = DataLoader(val_dataset, batch_size=training_config["batch_size"], shuffle=False, collate_fn=pre_process_batch)
 
     classifier = build_model(model_configuration)
     classifier = classifier.to("cuda")
+
+    print(classifier)
 
     best_val_acc, best_model_state, history, last_improved = train_basic_classifier(classifier, train_loader, val_loader, training_config, optimizer_config)
     
