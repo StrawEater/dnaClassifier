@@ -96,3 +96,32 @@ class DNAClassifier(nn.Module):
     
     def get_ranks(self):
         return len(self.rank_classifiers)
+
+    def get_dynamic_loss_weights(self, current_epoch, total_epochs):
+        """
+        Linear shift from lower to higher ranks
+        """
+        num_ranks = len(self.rank_classifiers_end)
+        progress = min(current_epoch / total_epochs, 1.0)
+        
+        def cuadratic_f(x, offset, roots):
+            x -= offset
+            result =  1 - (x/roots) * (x/roots) 
+            return max(0, result)
+        
+        # var = (1 - progress) + 0.001
+        var = 1
+        offset = min(1 , (progress * 1.3))
+
+        weights = []
+        for rank_idx in range(num_ranks):
+
+            norm_rank = rank_idx / (num_ranks - 1) # 0 a 1
+            coeff = cuadratic_f(norm_rank, offset, var)
+            coeff = max(0.2, coeff)
+            
+            base_weight = self.get_loss_weight(rank_idx)
+
+            weights.append(base_weight * coeff)
+
+        return weights

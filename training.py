@@ -3,7 +3,8 @@ import torch
 from sklearn.metrics import accuracy_score, precision_recall_fscore_support, confusion_matrix
 import numpy as np
 
-def do_criterion_by_rank(model, predictions, labels, criterion, device):
+
+def do_criterion_by_rank(model, predictions, labels, criterion, device, loss_weights):
   
   loss = torch.tensor(0.0, device=device)
   loss_by_rank = np.zeros(len(predictions))
@@ -14,11 +15,11 @@ def do_criterion_by_rank(model, predictions, labels, criterion, device):
     loss_rank = criterion(rank_prediction, rank_labels) 
     loss_by_rank[idx] = loss_rank
     
-    loss += loss_rank * model.get_loss_weight(idx)
+    loss += loss_rank * loss_weights[idx]
   
   return loss, loss_by_rank
 
-def train_epoch(model, dataloader, criterion, optimizer, device):
+def train_epoch(model, dataloader, criterion, optimizer, device, loss_weights):
   """Train for one epoch"""
   
   model.train()
@@ -43,7 +44,7 @@ def train_epoch(model, dataloader, criterion, optimizer, device):
     
     outputs = model(sequences)
 
-    loss, loss_by_rank = do_criterion_by_rank(model, outputs, labels, criterion, device)
+    loss, loss_by_rank = do_criterion_by_rank(model, outputs, labels, criterion, device, loss_weights)
     
     total_loss += loss.item()
     total_loss_by_rank += loss_by_rank
@@ -88,7 +89,7 @@ def train_epoch(model, dataloader, criterion, optimizer, device):
 
   return results
 
-def evaluate(model, dataloader, criterion, device):
+def evaluate(model, dataloader, criterion, device, loss_weights):
   """Evaluate model"""
   model.eval()
   
@@ -112,7 +113,7 @@ def evaluate(model, dataloader, criterion, device):
       labels = labels.to(device)
       outputs = model(inputs)
       
-      loss, loss_by_rank = do_criterion_by_rank(model, outputs, labels, criterion, device)
+      loss, loss_by_rank = do_criterion_by_rank(model, outputs, labels, criterion, device, loss_weights)
     
       total_loss += loss.item()
       total_loss_by_rank += loss_by_rank
