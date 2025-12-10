@@ -1,21 +1,42 @@
 
+import torch
 from torch.optim import AdamW
-from torch.optim.lr_scheduler import CosineAnnealingLR
+from torch.optim.lr_scheduler import CosineAnnealingLR, LinearLR, SequentialLR
 import torch.nn as nn
 from training import train_epoch, evaluate, save_best_model
 
 
-def train_basic_classifier(model, train_loader, val_loader, config):
+def train_basic_classifier(model, train_loader, val_loader, training_config, optimizer_config):
 
-    NUM_EPOCHS = config["num_epochs"]
-    LEARNING_RATE = config["lr"]
-    PATIENCE = config["patience"]
+    NUM_EPOCHS = training_config["num_epochs"]
+    PATIENCE = training_config["patience"]
     DEVICE = next(model.parameters()).device
 
-    criterion = nn.CrossEntropyLoss(label_smoothing=0.05)
-    optimizer = AdamW(model.parameters(), lr=LEARNING_RATE)
-    scheduler = CosineAnnealingLR(optimizer, T_max=NUM_EPOCHS)
-    
+    optimizer = torch.optim.AdamW(
+        model.parameters(),
+        lr=training_config['lr'],
+        weight_decay=training_config['weight_decay']
+    )
+
+    warmup_scheduler = LinearLR(
+        optimizer, 
+        start_factor=0.1, 
+        total_iters=training_config['warmup_epochs']
+    )
+
+    cosine_scheduler = CosineAnnealingLR(
+        optimizer, 
+        T_max=training_config['num_epochs'] - training_config['warmup_epochs']
+    )
+
+    scheduler = SequentialLR(
+        optimizer, 
+        schedulers=[warmup_scheduler, cosine_scheduler],
+        milestones=[training_config['warmup_epochs']]
+    )
+
+    criterion = nn.CrossEntropyLoss(label_smoothing=training_config['label_smoothing'])
+
     # Best Top5 Accuracy
     best_val_acc = 0
     best_model_state = None

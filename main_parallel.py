@@ -77,9 +77,9 @@ def main():
     print(f"  Classes: {number_of_classes}")
 
     backbone_config = {
-        "first_channel_size" : 2,
-        "deepness" : 2,
-        "tmp_channels": 256,
+        "first_channel_size" : 4,
+        "deepness" : 3,
+        "tmp_channels": 512,
     }
 
     embedder_config = {
@@ -88,7 +88,7 @@ def main():
     }
 
     config_classifiers = []
-    in_features = 1024
+    in_features = 768
     
     for num_class in number_of_classes:
         
@@ -106,7 +106,7 @@ def main():
         config_classifiers.append(rank_classifier)
 
     dnaClassifier_config = {
-        "tmp_channel" : 1024,
+        "tmp_channel" : 768,
         "deepness" : 3
     }
 
@@ -118,14 +118,29 @@ def main():
     }
 
     training_config = {
-        "batch_size" : 32,
-        "num_epochs" : 10,
-        "lr" : 1e-3,
-        "patience": 4,
+        "batch_size" : 64,
+        "num_epochs" : 15,
+        "lr" : 5e-4,
+        "weight_decay": 1e-4,  # Add regularization
+        "patience": 5,  # More patience for large class counts
+        "label_smoothing": 0.08,  # Add for better generalization
+        "gradient_clip": 1.0,  # Prevent gradient explosion
+        "warmup_epochs": 2,  # Gradual LR warmup
+        "lr_schedule": "cosine",  # Cosine annealing
+        "accumulation_steps": 2,  # Gradient accumulation for effective batch_size=128
+    }
+
+    # Optimizer config
+    optimizer_config = {
+        "type": "AdamW",
+        "lr": 5e-4,
+        "betas": (0.9, 0.999),
+        "weight_decay": 1e-4,
+        "eps": 1e-8
     }   
 
     # Create datasets
-    train_dataset = FastaDataset(X_train, y_train, max_length=embedder_config["max_length"])
+    train_dataset = FastaDataset(X_train[1:20], y_train[1:20], max_length=embedder_config["max_length"])
     val_dataset = FastaDataset(X_val, y_val, max_length=embedder_config["max_length"])
 
     train_loader = DataLoader(train_dataset, batch_size=training_config["batch_size"], shuffle=True, collate_fn=pre_process_batch)
@@ -134,7 +149,7 @@ def main():
     classifier = build_model(model_configuration)
     classifier = classifier.to("cuda")
 
-    best_val_acc, best_model_state, history = train_basic_classifier(classifier, train_loader, val_loader, training_config)
+    best_val_acc, best_model_state, history = train_basic_classifier(classifier, train_loader, val_loader, training_config, optimizer_config)
     
     torch.save(best_model_state, "best_model_ddp.pt")
 

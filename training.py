@@ -112,7 +112,7 @@ def evaluate(model, dataloader, criterion, device):
       labels = labels.to(device)
       outputs = model(inputs)
       
-      loss, loss_by_rank = do_criterion_by_rank(outputs, labels, criterion, device)
+      loss, loss_by_rank = do_criterion_by_rank(model, outputs, labels, criterion, device)
     
       total_loss += loss.item()
       total_loss_by_rank += loss_by_rank
