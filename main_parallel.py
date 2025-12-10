@@ -153,7 +153,7 @@ def main():
     best_val_acc, best_model_state, history, last_improved = train_basic_classifier(classifier, train_loader, val_loader, training_config, optimizer_config)
     
     date = datetime.now().strftime("%Y%m%d")
-    torch.save(best_model_state, f"models/best_model_ddpTest_{date}.pt")
+    torch.save(best_model_state, f"models/best_model_ddp_{date}.pt")
 
     best_model_train_metrics = history["train"][last_improved]
     best_model_val_metrics = history["val"][last_improved]

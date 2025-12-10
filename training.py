@@ -13,7 +13,7 @@ def do_criterion_by_rank(model, predictions, labels, criterion, device, loss_wei
       
     rank_labels = labels[:, idx]
     loss_rank = criterion(rank_prediction, rank_labels) 
-    loss_by_rank[idx] = loss_rank
+    loss_by_rank[idx] = loss_rank.item()
     
     loss += loss_rank * loss_weights[idx]
   
