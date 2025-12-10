@@ -150,11 +150,21 @@ def main():
     classifier = build_model(model_configuration)
     classifier = classifier.to("cuda")
 
-    best_val_acc, best_model_state, history = train_basic_classifier(classifier, train_loader, val_loader, training_config, optimizer_config)
+    best_val_acc, best_model_state, history, last_improved = train_basic_classifier(classifier, train_loader, val_loader, training_config, optimizer_config)
     
     date = datetime.now().strftime("%Y%m%d")
-    torch.save(best_model_state, f"models/best_model_ddp_{date}.pt")
+    torch.save(best_model_state, f"models/best_model_ddpTest_{date}.pt")
 
+    best_model_train_metrics = history["train"][last_improved]
+    best_model_val_metrics = history["val"][last_improved]
+
+    print("\nBEST MODEL")
+    print(f"  Train - Loss: {best_model_train_metrics['loss_avg']:.4f}, Rank Loss: {best_model_train_metrics['loss_rank_avg']}")
+    print(f"          Top-1: {best_model_train_metrics['top1_acc']:.4f}, Top-5: {best_model_train_metrics['top5_acc']:.4f}")
+    print(f"          Rank Top-1: {best_model_train_metrics['top1_rank_acc']}, Rank Top-5: {best_model_train_metrics['top5_rank_acc']}")
+    print(f"  Val   - Loss: {best_model_val_metrics['loss_avg']:.4f}, Rank Loss: {best_model_val_metrics['loss_rank_avg']}")
+    print(f"          Top-1: {best_model_val_metrics['top1_acc']:.4f}, Top-5: {best_model_val_metrics['top5_acc']:.4f}")
+    print(f"          Rank Top-1: {best_model_val_metrics['top1_rank_acc']}, Rank Top-5: {best_model_val_metrics['top5_rank_acc']}")
 
 if __name__ == "__main__":
     main()

@@ -40,6 +40,7 @@ def train_basic_classifier(model, train_loader, val_loader, training_config, opt
 
     # Best Top5 Accuracy
     best_val_acc = 0
+    last_improved = 0
     best_model_state = None
     epochs_without_improvement = 0
         
@@ -80,10 +81,15 @@ def train_basic_classifier(model, train_loader, val_loader, training_config, opt
             val_metrics["top5_acc"], best_val_acc, model, best_model_state
         )
 
-        epochs_without_improvement = 0 if improved else epochs_without_improvement + 1
+        if improved:
+            last_improved = epoch
+            epochs_without_improvement = 0 
+        else:
+            epochs_without_improvement += 1
+            
 
         if epochs_without_improvement >= PATIENCE:
             print("Early stopping.")
             break
 
-    return best_val_acc, best_model_state, history
+    return best_val_acc, best_model_state, history, last_improved
