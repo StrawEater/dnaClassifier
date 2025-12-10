@@ -141,8 +141,8 @@ def main():
     }   
 
     # Create datasets
-    train_dataset = FastaDataset(X_train[1:20], y_train[1:20], max_length=embedder_config["max_length"])
-    val_dataset = FastaDataset(X_val[1:20], y_val[1:20], max_length=embedder_config["max_length"])
+    train_dataset = FastaDataset(X_train, y_train, max_length=embedder_config["max_length"])
+    val_dataset = FastaDataset(X_val, y_val, max_length=embedder_config["max_length"])
 
     train_loader = DataLoader(train_dataset, batch_size=training_config["batch_size"], shuffle=True, collate_fn=pre_process_batch)
     val_loader = DataLoader(val_dataset, batch_size=training_config["batch_size"], shuffle=False, collate_fn=pre_process_batch)
