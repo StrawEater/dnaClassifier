@@ -71,8 +71,8 @@ def train_epoch(model, dataloader, criterion, optimizer, device):
   top1_acc = top1_correct / total
   top5_acc = top5_correct / total
   
-  top1_rank_acc = top1_by_rank / len(dataloader)
-  top5_rank_acc = top5_by_rank / len(dataloader)
+  top1_rank_acc = top1_by_rank / (total // model.get_ranks())
+  top5_rank_acc = top5_by_rank / (total // model.get_ranks())
   
   loss_avg = total_loss / len(dataloader)
   loss_rank_avg = total_loss_by_rank / len(dataloader)
@@ -136,8 +136,8 @@ def evaluate(model, dataloader, criterion, device):
   top1_acc = top1_correct / total
   top5_acc = top5_correct / total
   
-  top1_rank_acc = top1_by_rank / len(dataloader)
-  top5_rank_acc = top5_by_rank / len(dataloader)
+  top1_rank_acc = top1_by_rank / (total // model.get_ranks())
+  top5_rank_acc = top5_by_rank / (total // model.get_ranks())
   
   loss_avg = total_loss / len(dataloader)
   loss_rank_avg = total_loss_by_rank / len(dataloader)
@@ -155,6 +155,6 @@ def evaluate(model, dataloader, criterion, device):
 
 def save_best_model(accuracy, best_val_acc, model, best_model):
   if accuracy > best_val_acc:
-    return accuracy, unwrap(model).state_dict().copy(), True 
+    return accuracy, model.state_dict().copy(), True 
   else:
     return best_val_acc, best_model, False 

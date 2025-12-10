@@ -65,12 +65,12 @@ def train_basic_classifier(model, train_loader, val_loader, training_config, opt
         history['val'].append(val_metrics)
 
         print(f"\nEpoch [{epoch+1}/{NUM_EPOCHS}]")
-        print(f"  Train - Loss: {train_metrics['loss_avg']:.4f}, Rank Loss: {train_metrics['loss_rank_avg']:.4f}")
+        print(f"  Train - Loss: {train_metrics['loss_avg']:.4f}, Rank Loss: {train_metrics['loss_rank_avg']}")
         print(f"          Top-1: {train_metrics['top1_acc']:.4f}, Top-5: {train_metrics['top5_acc']:.4f}")
-        print(f"          Rank Top-1: {train_metrics['top1_rank_acc']:.4f}, Rank Top-5: {train_metrics['top5_rank_acc']:.4f}")
-        print(f"  Val   - Loss: {val_metrics['loss_avg']:.4f}, Rank Loss: {val_metrics['loss_rank_avg']:.4f}")
+        print(f"          Rank Top-1: {train_metrics['top1_rank_acc']}, Rank Top-5: {train_metrics['top5_rank_acc']}")
+        print(f"  Val   - Loss: {val_metrics['loss_avg']:.4f}, Rank Loss: {val_metrics['loss_rank_avg']}")
         print(f"          Top-1: {val_metrics['top1_acc']:.4f}, Top-5: {val_metrics['top5_acc']:.4f}")
-        print(f"          Rank Top-1: {val_metrics['top1_rank_acc']:.4f}, Rank Top-5: {val_metrics['top5_rank_acc']:.4f}")
+        print(f"          Rank Top-1: {val_metrics['top1_rank_acc']}, Rank Top-5: {val_metrics['top5_rank_acc']}")
         
         best_val_acc, best_model_state, improved = save_best_model(
             val_metrics["top5_acc"], best_val_acc, model, best_model_state

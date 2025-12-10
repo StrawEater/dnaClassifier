@@ -1,3 +1,5 @@
 data/*
 DNABERT-2-117M
 *.pyc
+best_model_ddp.pt
+models/*

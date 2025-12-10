@@ -13,6 +13,7 @@ import math
 import torch.nn as nn
 import pickle
 import numpy as np
+from datetime import datetime
 
 def load_splits(filename="splits.pkl"):
     with open(filename, "rb") as f:
@@ -141,7 +142,7 @@ def main():
 
     # Create datasets
     train_dataset = FastaDataset(X_train[1:20], y_train[1:20], max_length=embedder_config["max_length"])
-    val_dataset = FastaDataset(X_val, y_val, max_length=embedder_config["max_length"])
+    val_dataset = FastaDataset(X_val[1:20], y_val[1:20], max_length=embedder_config["max_length"])
 
     train_loader = DataLoader(train_dataset, batch_size=training_config["batch_size"], shuffle=True, collate_fn=pre_process_batch)
     val_loader = DataLoader(val_dataset, batch_size=training_config["batch_size"], shuffle=False, collate_fn=pre_process_batch)
@@ -151,7 +152,9 @@ def main():
 
     best_val_acc, best_model_state, history = train_basic_classifier(classifier, train_loader, val_loader, training_config, optimizer_config)
     
-    torch.save(best_model_state, "best_model_ddp.pt")
+    date = datetime.now().strftime("%Y%m%d")
+    torch.save(best_model_state, f"models/best_model_ddp_{date}.pt")
+
 
 if __name__ == "__main__":
     main()
