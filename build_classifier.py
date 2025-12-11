@@ -15,7 +15,7 @@ def get_model_config(number_of_classes):
 
     embedder_config = {
         "path": "DNABERT-2-117M",
-        "max_length": 900
+        "max_length": 750
     }
 
     dnaClassifier_config = {

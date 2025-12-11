@@ -224,8 +224,8 @@ def main():
     y_val = data['y_val']
     ranks_to_label = data['ranks_to_label']
     
-    val_dataset = FastaDataset(X_val, y_val, max_length=900)
-    val_loader = DataLoader(val_dataset, batch_size=5, shuffle=True, collate_fn=pre_process_batch)
+    val_dataset = FastaDataset(X_val, y_val, max_length=750)
+    val_loader = DataLoader(val_dataset, batch_size=3, shuffle=True, collate_fn=pre_process_batch)
 
     # Get number of classes per rank
     number_of_classes = [len(labels) for labels in ranks_to_label.values()]

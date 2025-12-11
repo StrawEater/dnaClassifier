@@ -88,7 +88,8 @@ class GeneticAlgorithmDNA:
             entropies.append(entropy_score)
 
         mean_entropy = np.mean(entropies)
-        
+        entropy_score = mean_entropy
+
         # Penalize number of Ns
         ns_score = len(individual.n_positions) / self.max_n_count
         ns_penalty = self.n_penalty_weight * ns_score
