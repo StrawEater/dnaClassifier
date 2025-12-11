@@ -1,5 +1,5 @@
 from datasets.fasta_dataset import separate_train_val_test, FastaDataset, pre_process_batch
-from torch.utils.data import DataLoader, DistributedSampler
+from torch.utils.data import DataLoader
 from classifiers.dna_classifier_basic import DNAClassifier
 from classifiers.dna_classifier_back_bone import CNNBackbone, ResBlock
 from classifiers.rank_classifier import RankClassifer, RankClassiferEnd, RankClassiferCosine

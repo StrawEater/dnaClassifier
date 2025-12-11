@@ -1,12 +1,16 @@
 import torch
+import random
 import pickle
 import matplotlib.pyplot as plt
+from torch.utils.data import DataLoader
+from datasets.fasta_dataset import FastaDataset, pre_process_batch
 from genetic_algorithm_dna import GeneticAlgorithmDNA, analyze_solution
 from classifiers.dna_classifier_basic import DNAClassifier
 from classifiers.dna_classifier_back_bone import CNNBackbone
 from classifiers.rank_classifier import RankClassifer, RankClassiferEnd, RankClassiferCosine
 from dnabert_embedder import DNABERTEmbedder
 from build_classifier import get_model_config, build_model
+import os
 
 import numpy as np
 
@@ -17,14 +21,25 @@ def load_model(model_path, number_of_classes, device='cuda'):
     
     model_configuration = get_model_config(number_of_classes)
     classifier = build_model(model_configuration)
-    print(classifier)
     classifier.load_state_dict(torch.load(model_path, map_location=device))
     
-    classifier.to(device)
-    
+    classifier.to(device)    
     classifier.eval()
+
+    def classify(sequences):
+        probs_by_rank = []
+
+        with torch.no_grad():
+            predictions = classifier(sequences)
+                
+            for rank_pred in predictions:
+                # Get probabilities
+                probs = torch.softmax(rank_pred, dim=-1).cpu().numpy()[0]
+                probs_by_rank.append(probs)
+            
+            return probs_by_rank
     
-    return model
+    return classify
 
 
 def plot_evolution_history(history, save_path='evolution_history.png'):
@@ -163,26 +178,7 @@ def run_ga_experiment(
         print(f"Sequence length: {len(sequence)}")
         print(f"{'='*60}")
         
-        # Create GA
-        ga = GeneticAlgorithmDNA(
-            model=model,
-            device=device,
-            population_size=population_size,
-            max_n_positions=max_n_positions,
-            n_penalty_weight=n_penalty_weight,
-            continuity_penalty_weight=continuity_penalty_weight,
-            mutation_rate=0.2,
-            crossover_rate=0.7,
-            tournament_size=5,
-            elitism_count=5
-        )
         
-        # Run GA
-        best_solution, history = ga.run(
-            original_sequence=sequence,
-            n_generations=n_generations,
-            verbose=True
-        )
         
         # Analyze results
         analysis = analyze_solution(model, sequence, best_solution, device)
@@ -207,9 +203,14 @@ def run_ga_experiment(
 def main():
     """Main execution"""
     
+    random.seed(128)
+
+
+    os.environ["TOKENIZERS_PARALLELISM"] = "false"
+
     # Configuration
     DEVICE = 'cuda' if torch.cuda.is_available() else 'cpu'
-    MODEL_PATH = 'models/aaaaaa.pt'  # Adjust date
+    MODEL_PATH = 'models/best_model_correct.pt'  # Adjust date
     SPLITS_PATH = 'data/splits.pkl'
     
     print(f"Using device: {DEVICE}")
@@ -219,57 +220,72 @@ def main():
     with open(SPLITS_PATH, "rb") as f:
         data = pickle.load(f)
     
-    X_test = data['X_test']
-    y_test = data['y_test']
+    X_val = data['X_val']
+    y_val = data['y_val']
     ranks_to_label = data['ranks_to_label']
     
+    val_dataset = FastaDataset(X_val, y_val, max_length=900)
+    val_loader = DataLoader(val_dataset, batch_size=5, shuffle=True, collate_fn=pre_process_batch)
+
     # Get number of classes per rank
     number_of_classes = [len(labels) for labels in ranks_to_label.values()]
     print(f"Number of classes per rank: {number_of_classes}")
     
     # Load model
     print("\nLoading model...")
-    model = load_model(MODEL_PATH, number_of_classes, DEVICE)
+    classifier = load_model(MODEL_PATH, number_of_classes, DEVICE)
     print("Model loaded successfully!")
-    
+
     # Run GA experiments
     print("\n" + "="*60)
     print("STARTING GENETIC ALGORITHM EXPERIMENTS")
     print("="*60)
     
-    results = run_ga_experiment(
-        model=model,
-        test_sequences=X_test,
-        n_sequences=5,  # Test on 5 sequences
-        population_size=50,
-        n_generations=100,
-        max_n_positions=50,
-        n_penalty_weight=0.01,  # Tune this: higher = fewer Ns
-        continuity_penalty_weight=0.05,  # NEW: Tune this: higher = more continuous segments
-        device=DEVICE
+    # Create GA
+    ga = GeneticAlgorithmDNA(
+        classifier,
+        [0],
+        population_size = 20,
+        
+        max_n_count = 500,
+        max_sequence_lengths = 900,
+        
+        n_penalty_weight = 0.01,
+        discontinuity_penalty_weight = 0.05,
+        
+        mutation_rate = 0.3,
+        crossover_rate = 0.7,
+        tournament_size = 4,
+        elitism_count = 3
     )
     
-    # Summary statistics
-    print("\n" + "="*60)
-    print("SUMMARY STATISTICS")
-    print("="*60)
+    # Run GA
+    best_solution, history = ga.run(
+        val_loader, 
+        epochs = 10
+    )
     
-    entropy_increases = [r['analysis']['entropy_increase'] for r in results]
-    n_counts = [r['analysis']['n_count'] for r in results]
-    n_percentages = [r['analysis']['n_percentage'] for r in results]
-    continuity_scores = [r['analysis']['continuity_score'] for r in results]
-    num_segments = [r['analysis']['num_segments'] for r in results]
+    # # Summary statistics
+    # print("\n" + "="*60)
+    # print("SUMMARY STATISTICS")
+    # print("="*60)
     
-    print(f"\nAverage entropy increase: {np.mean(entropy_increases):.4f} ± {np.std(entropy_increases):.4f}")
-    print(f"Average N count: {np.mean(n_counts):.1f} ± {np.std(n_counts):.1f}")
-    print(f"Average N percentage: {np.mean(n_percentages):.2f}% ± {np.std(n_percentages):.2f}%")
-    print(f"Average continuity score: {np.mean(continuity_scores):.4f} ± {np.std(continuity_scores):.4f}")
-    print(f"Average number of segments: {np.mean(num_segments):.1f} ± {np.std(num_segments):.1f}")
+    # entropy_increases = [r['analysis']['entropy_increase'] for r in results]
+    # n_counts = [r['analysis']['n_count'] for r in results]
+    # n_percentages = [r['analysis']['n_percentage'] for r in results]
+    # continuity_scores = [r['analysis']['continuity_score'] for r in results]
+    # num_segments = [r['analysis']['num_segments'] for r in results]
     
-    # Save results
-    with open('ga_results.pkl', 'wb') as f:
-        pickle.dump(results, f)
-    print("\nResults saved to ga_results.pkl")
+    # print(f"\nAverage entropy increase: {np.mean(entropy_increases):.4f} ± {np.std(entropy_increases):.4f}")
+    # print(f"Average N count: {np.mean(n_counts):.1f} ± {np.std(n_counts):.1f}")
+    # print(f"Average N percentage: {np.mean(n_percentages):.2f}% ± {np.std(n_percentages):.2f}%")
+    # print(f"Average continuity score: {np.mean(continuity_scores):.4f} ± {np.std(continuity_scores):.4f}")
+    # print(f"Average number of segments: {np.mean(num_segments):.1f} ± {np.std(num_segments):.1f}")
+    
+    # # Save results
+    # with open('ga_results.pkl', 'wb') as f:
+    #     pickle.dump(results, f)
+    # print("\nResults saved to ga_results.pkl")
 
 
 if __name__ == "__main__":

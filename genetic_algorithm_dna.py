@@ -5,102 +5,8 @@ from tqdm import tqdm
 import random
 from scipy.stats import entropy
 from copy import deepcopy
-
-
-class DNASequenceIndividual:
-    """Represents a solution: positions where to place 'N' in a DNA sequence"""
-    
-    def __init__(self, sequence_length: int, n_positions: List[int] = None):
-        self.sequence_length = sequence_length
-        self.n_positions = n_positions if n_positions is not None else []
-        self.fitness = None
-        self.entropy_score = None
-        self.n_count_penalty = None
-        self.continuity_penalty = None
-    
-    def apply_to_sequence(self, original_sequence: str) -> str:
-        """Apply the N positions to create a perturbed sequence"""
-        seq_list = list(original_sequence)
-        for pos in self.n_positions:
-            if pos < len(seq_list):
-                seq_list[pos] = 'N'
-        return ''.join(seq_list)
-    
-    def get_continuous_segments(self) -> List[Tuple[int, int]]:
-        """
-        Get continuous segments of N positions
-        Returns list of (start, length) tuples
-        """
-        if not self.n_positions:
-            return []
-        
-        segments = []
-        current_start = self.n_positions[0]
-        current_length = 1
-        
-        for i in range(1, len(self.n_positions)):
-            if self.n_positions[i] == self.n_positions[i-1] + 1:
-                # Continuous
-                current_length += 1
-            else:
-                # Break in continuity
-                segments.append((current_start, current_length))
-                current_start = self.n_positions[i]
-                current_length = 1
-        
-        # Don't forget last segment
-        segments.append((current_start, current_length))
-        
-        return segments
-    
-    def calculate_continuity_score(self) -> float:
-        """
-        Calculate continuity score - rewards continuous segments
-        Returns a value between 0 (all isolated) and 1 (all continuous)
-        """
-        if len(self.n_positions) <= 1:
-            return 1.0
-        
-        segments = self.get_continuous_segments()
-        
-        # Ideal case: all Ns in one segment
-        # Worst case: all Ns isolated (n_positions segments)
-        num_segments = len(segments)
-        max_segments = len(self.n_positions)  # Worst case
-        min_segments = 1  # Best case
-        
-        # Normalize: 0 = worst (many segments), 1 = best (few segments)
-        if max_segments == min_segments:
-            return 1.0
-        
-        continuity = 1.0 - (num_segments - min_segments) / (max_segments - min_segments)
-        return continuity
-    
-    def calculate_discontinuity_penalty(self) -> float:
-        """
-        Calculate penalty for discontinuous N positions
-        Penalty increases with number of separate segments
-        """
-        if len(self.n_positions) <= 1:
-            return 0.0
-        
-        segments = self.get_continuous_segments()
-        num_segments = len(segments)
-        
-        # Penalty is proportional to number of segments
-        # More segments = more penalty
-        penalty = num_segments - 1  # 0 if all continuous (1 segment)
-        
-        return penalty
-    
-    def copy(self):
-        """Create a deep copy of the individual"""
-        new_ind = DNASequenceIndividual(self.sequence_length, self.n_positions.copy())
-        new_ind.fitness = self.fitness
-        new_ind.entropy_score = self.entropy_score
-        new_ind.n_count_penalty = self.n_count_penalty
-        new_ind.continuity_penalty = self.continuity_penalty
-        return new_ind
+from dna_sequence_perturber import DNASequencePerturber
+from dna_sequence_perturber_mutators import *
 
 
 class GeneticAlgorithmDNA:
@@ -108,12 +14,17 @@ class GeneticAlgorithmDNA:
     
     def __init__(
         self,
-        model,
-        device: str = 'cuda',
+        classifier,
+        ranks_for_entropy,
+        
         population_size: int = 50,
-        max_n_positions: int = 50,
+        
+        max_n_count: int = 50,
+        max_sequence_lengths: int = 900,
+        
         n_penalty_weight: float = 0.01,
-        continuity_penalty_weight: float = 0.05,
+        discontinuity_penalty_weight: float = 0.05,
+        
         mutation_rate: float = 0.2,
         crossover_rate: float = 0.7,
         tournament_size: int = 5,
@@ -122,9 +33,8 @@ class GeneticAlgorithmDNA:
         """
         Args:
             model: Trained DNA classifier model
-            device: Device to run model on
             population_size: Number of individuals in population
-            max_n_positions: Maximum number of N positions allowed
+            max_n_count: Maximum number of N positions allowed
             n_penalty_weight: Weight for penalizing number of Ns
             continuity_penalty_weight: Weight for penalizing discontinuous segments
             mutation_rate: Probability of mutation
@@ -132,126 +42,90 @@ class GeneticAlgorithmDNA:
             tournament_size: Size of tournament for selection
             elitism_count: Number of best individuals to preserve
         """
-        self.model = model
-        self.device = device
+        self.classifier = classifier
+        self.ranks_for_entropy = ranks_for_entropy
         self.population_size = population_size
-        self.max_n_positions = max_n_positions
+        self.max_n_count = max_n_count
+        self.max_sequence_lengths = max_sequence_lengths
         self.n_penalty_weight = n_penalty_weight
-        self.continuity_penalty_weight = continuity_penalty_weight
+        self.discontinuity_penalty_weight = discontinuity_penalty_weight
         self.mutation_rate = mutation_rate
         self.crossover_rate = crossover_rate
         self.tournament_size = tournament_size
         self.elitism_count = elitism_count
         
-        self.model.eval()
     
-    def calculate_prediction_entropy(self, sequence: str) -> Tuple[float, List[np.ndarray]]:
+    def calculate_prediction_entropy(self, sequences: List[str]) -> float:
         """Calculate entropy of model predictions for a sequence"""
-        with torch.no_grad():
-            predictions = self.model([sequence])
             
-            entropies = []
-            all_probs = []
+        predictions = self.classifier(sequences)
+
+        entropies = []
+        
+        for rank_idx in self.ranks_for_entropy:
+
+            rank_probs = predictions[rank_idx]
+
+            # Calculate entropy
+            rank_entropy = entropy(rank_probs)
+            entropies.append(rank_entropy)
+        
+        # Average entropy across all ranks
+        avg_entropy = np.mean(entropies)
             
-            for rank_pred in predictions:
-                # Get probabilities
-                probs = torch.softmax(rank_pred, dim=-1).cpu().numpy()[0]
-                all_probs.append(probs)
-                
-                # Calculate entropy
-                rank_entropy = entropy(probs)
-                entropies.append(rank_entropy)
-            
-            # Average entropy across all ranks
-            avg_entropy = np.mean(entropies)
-            
-        return avg_entropy, all_probs
+        return avg_entropy
     
-    def evaluate_fitness(self, individual: DNASequenceIndividual, original_sequence: str) -> float:
-        """
-        Evaluate fitness of an individual
-        Fitness = entropy_score - n_penalty_weight * n_count - continuity_penalty_weight * discontinuity_penalty
+    def evaluate_fitness(self, individual: DNASequencePerturber, original_sequences: List[str]) -> float:
         
-        The continuity penalty penalizes having many separate N segments
-        """
         # Apply N positions to sequence
-        perturbed_seq = individual.apply_to_sequence(original_sequence)
-        
-        # Calculate entropy
-        entropy_score, _ = self.calculate_prediction_entropy(perturbed_seq)
+
+        entropies = []
+
+        for sequence in original_sequences:
+
+            perturbed_seq = individual.apply_to_sequence([sequence])
+            entropy_score = self.calculate_prediction_entropy(perturbed_seq)
+            entropies.append(entropy_score)
+
+        mean_entropy = np.mean(entropies)
         
         # Penalize number of Ns
-        n_count = len(individual.n_positions)
-        n_penalty = self.n_penalty_weight * n_count
+        ns_score = len(individual.n_positions) / self.max_n_count
+        ns_penalty = self.n_penalty_weight * ns_score
         
         # Penalize discontinuity (more segments = higher penalty)
-        discontinuity_penalty = individual.calculate_discontinuity_penalty()
-        continuity_penalty = self.continuity_penalty_weight * discontinuity_penalty
+        continuity_score = individual.calculate_continuity_score()
+        discontinuity_penalty = self.discontinuity_penalty_weight * (1 - continuity_score)
         
         # Fitness is entropy minus penalties
-        fitness = entropy_score - n_penalty - continuity_penalty
+        fitness = entropy_score - ns_penalty - discontinuity_penalty
         
         # Store components for analysis
         individual.entropy_score = entropy_score
-        individual.n_count_penalty = n_penalty
-        individual.continuity_penalty = continuity_penalty
+        individual.n_count_penalty = ns_penalty
+        individual.continuity_penalty = discontinuity_penalty
         individual.fitness = fitness
         
         return fitness
     
-    def initialize_population(self, sequence_length: int) -> List[DNASequenceIndividual]:
+    def initialize_population(self) -> List[DNASequencePerturber]:
         """Initialize random population with preference for continuous segments"""
         population = []
         
         for i in range(self.population_size):
-            # Mix of strategies
-            if i < self.population_size // 3:
-                # Random scattered positions
-                n_count = random.randint(0, self.max_n_positions)
-                n_positions = sorted(random.sample(range(sequence_length), n_count))
             
-            elif i < 2 * self.population_size // 3:
-                # Continuous segments
-                n_positions = self._generate_continuous_positions(sequence_length)
+            if i < self.population_size // 2:
+                n_positions = generate_random_continuous_positions(self.max_sequence_lengths//10, self.max_sequence_lengths)
             
             else:
-                # Few continuous segments (2-5 segments)
-                n_positions = self._generate_few_segments(sequence_length)
+                n_positions = generate_few_segments(self.max_n_count, self.max_sequence_lengths, 80)
             
-            individual = DNASequenceIndividual(sequence_length, n_positions)
+            individual = DNASequencePerturber(self.max_sequence_lengths, n_positions)
             population.append(individual)
         
         return population
     
-    def _generate_continuous_positions(self, sequence_length: int) -> List[int]:
-        """Generate a single continuous segment of Ns"""
-        segment_length = random.randint(1, min(self.max_n_positions, sequence_length // 4))
-        start_pos = random.randint(0, sequence_length - segment_length)
-        return list(range(start_pos, start_pos + segment_length))
-    
-    def _generate_few_segments(self, sequence_length: int) -> List[int]:
-        """Generate 2-5 continuous segments"""
-        num_segments = random.randint(2, 5)
-        positions = []
-        
-        remaining_n = self.max_n_positions
-        
-        for _ in range(num_segments):
-            if remaining_n <= 0:
-                break
-            
-            segment_length = random.randint(1, max(1, remaining_n // (num_segments + 1)))
-            start_pos = random.randint(0, max(0, sequence_length - segment_length - 1))
-            
-            segment = list(range(start_pos, start_pos + segment_length))
-            positions.extend(segment)
-            remaining_n -= segment_length
-        
-        # Remove duplicates and sort
-        positions = sorted(list(set(positions)))[:self.max_n_positions]
-        return positions
-    
-    def tournament_selection(self, population: List[DNASequenceIndividual]) -> DNASequenceIndividual:
+    def tournament_selection(self, population: List[DNASequencePerturber]) -> DNASequencePerturber:
         """Select individual using tournament selection"""
         tournament = random.sample(population, self.tournament_size)
         winner = max(tournament, key=lambda ind: ind.fitness)
@@ -259,11 +133,13 @@ class GeneticAlgorithmDNA:
     
     def crossover(
         self, 
-        parent1: DNASequenceIndividual, 
-        parent2: DNASequenceIndividual
-    ) -> Tuple[DNASequenceIndividual, DNASequenceIndividual]:
+        parent1: DNASequencePerturber, 
+        parent2: DNASequencePerturber
+    ) -> Tuple[DNASequencePerturber, DNASequencePerturber]:
+        
+        chance = random.random() 
         """Perform crossover between two parents - segment-aware"""
-        if random.random() > self.crossover_rate:
+        if chance > self.crossover_rate:
             return parent1.copy(), parent2.copy()
         
         # Get segments from both parents
@@ -282,125 +158,67 @@ class GeneticAlgorithmDNA:
         
         # Split segments between children
         for i, (start, length) in enumerate(all_segments):
-            segment_positions = list(range(start, start + length))
+            segment_positions = generate_continues_positions(start, length)
             
             if i % 2 == 0:
                 child1_positions.extend(segment_positions)
             else:
                 child2_positions.extend(segment_positions)
         
-        # Limit and sort
-        child1_positions = sorted(list(set(child1_positions)))[:self.max_n_positions]
-        child2_positions = sorted(list(set(child2_positions)))[:self.max_n_positions]
+        child1_positions = remove_duplicates_and_fix_size(child1_positions, self.max_n_count)
+        child2_positions = remove_duplicates_and_fix_size(child2_positions, self.max_n_count)
         
-        child1 = DNASequenceIndividual(parent1.sequence_length, child1_positions)
-        child2 = DNASequenceIndividual(parent2.sequence_length, child2_positions)
+        child1 = DNASequencePerturber(parent1.sequence_length, child1_positions)
+        child2 = DNASequencePerturber(parent2.sequence_length, child2_positions)
         
         return child1, child2
     
-    def mutate(self, individual: DNASequenceIndividual) -> DNASequenceIndividual:
+    def mutate(self, individual: DNASequencePerturber) -> DNASequencePerturber:
+        
         """Mutate an individual - continuity-aware mutations"""
         if random.random() > self.mutation_rate:
             return individual
         
         mutated = individual.copy()
-        
         # Choose mutation type with bias toward continuity-preserving mutations
-        mutation_types = ['add_continuous', 'remove_segment', 'extend_segment', 
-                         'merge_segments', 'split_segment', 'shift_segment']
+        mutation_types = ['add_continuous','remove_segment', 'extend_segment','merge_segments','split_segment','shift_segment','shift_segment']
+
         mutation_type = random.choice(mutation_types)
         
-        segments = mutated.get_continuous_segments()
+        if mutation_type == 'add_continuous':
+            add_continuous(mutated, self.max_n_count, 10)
+
+        elif mutation_type == 'remove_segment':
+            remove_segment(mutated)
+
+        elif mutation_type == 'extend_segment':
+            extend_segment(mutated, self.max_n_count, 10)
+
+        elif mutation_type == 'merge_segments':
+            merge_segments(mutated, self.max_n_count, 15)
         
-        if mutation_type == 'add_continuous' and len(mutated.n_positions) < self.max_n_positions:
-            # Add a new continuous segment
-            segment_length = random.randint(1, min(5, self.max_n_positions - len(mutated.n_positions)))
-            start_pos = random.randint(0, mutated.sequence_length - segment_length)
-            new_positions = list(range(start_pos, start_pos + segment_length))
-            mutated.n_positions.extend(new_positions)
-            mutated.n_positions = sorted(list(set(mutated.n_positions)))[:self.max_n_positions]
+        elif mutation_type == 'split_segment':
+            split_segment(mutated, 40, 20)
         
-        elif mutation_type == 'remove_segment' and segments:
-            # Remove an entire segment
-            segment_to_remove = random.choice(segments)
-            start, length = segment_to_remove
-            positions_to_remove = set(range(start, start + length))
-            mutated.n_positions = [p for p in mutated.n_positions if p not in positions_to_remove]
-        
-        elif mutation_type == 'extend_segment' and segments and len(mutated.n_positions) < self.max_n_positions:
-            # Extend a random segment by 1-3 positions
-            segment = random.choice(segments)
-            start, length = segment
-            
-            # Extend left or right
-            if random.random() < 0.5 and start > 0:
-                mutated.n_positions.append(start - 1)
-            else:
-                end = start + length
-                if end < mutated.sequence_length:
-                    mutated.n_positions.append(end)
-            
-            mutated.n_positions = sorted(list(set(mutated.n_positions)))[:self.max_n_positions]
-        
-        elif mutation_type == 'merge_segments' and len(segments) >= 2:
-            # Try to merge two nearby segments by filling the gap
-            segments_sorted = sorted(segments, key=lambda x: x[0])
-            
-            for i in range(len(segments_sorted) - 1):
-                start1, len1 = segments_sorted[i]
-                start2, len2 = segments_sorted[i + 1]
-                
-                gap = start2 - (start1 + len1)
-                
-                if 1 <= gap <= 5 and len(mutated.n_positions) + gap <= self.max_n_positions:
-                    # Fill the gap
-                    gap_positions = list(range(start1 + len1, start2))
-                    mutated.n_positions.extend(gap_positions)
-                    mutated.n_positions = sorted(list(set(mutated.n_positions)))
-                    break
-        
-        elif mutation_type == 'split_segment' and segments:
-            # Split a segment by removing a position in the middle
-            long_segments = [s for s in segments if s[1] > 3]
-            if long_segments:
-                segment = random.choice(long_segments)
-                start, length = segment
-                
-                # Remove a position in the middle
-                middle_pos = start + length // 2
-                if middle_pos in mutated.n_positions:
-                    mutated.n_positions.remove(middle_pos)
-        
-        elif mutation_type == 'shift_segment' and segments:
-            # Shift an entire segment left or right
-            segment = random.choice(segments)
-            start, length = segment
-            
-            shift = random.choice([-3, -2, -1, 1, 2, 3])
-            new_start = max(0, min(mutated.sequence_length - length, start + shift))
-            
-            if new_start != start:
-                # Remove old segment
-                old_positions = set(range(start, start + length))
-                mutated.n_positions = [p for p in mutated.n_positions if p not in old_positions]
-                
-                # Add new segment
-                new_positions = list(range(new_start, new_start + length))
-                mutated.n_positions.extend(new_positions)
-                mutated.n_positions = sorted(list(set(mutated.n_positions)))[:self.max_n_positions]
+        elif mutation_type == 'shift_segment':
+            shift_segment(mutated, self.max_n_count, 10)
+
+        else:
+            assert False, "Hubo un problemas con las mutaciones"
         
         return mutated
-    
+
     def evolve_generation(
         self, 
-        population: List[DNASequenceIndividual],
-        original_sequence: str
-    ) -> List[DNASequenceIndividual]:
+        population: List[DNASequencePerturber],
+        original_sequences: List[str]
+    ) -> List[DNASequencePerturber]:
         """Evolve one generation"""
+        
         # Evaluate fitness for all individuals
         for ind in population:
             if ind.fitness is None:
-                self.evaluate_fitness(ind, original_sequence)
+                self.evaluate_fitness(ind, original_sequences)
         
         # Sort by fitness
         population.sort(key=lambda ind: ind.fitness, reverse=True)
@@ -420,7 +238,7 @@ class GeneticAlgorithmDNA:
             # Mutation
             child1 = self.mutate(child1)
             child2 = self.mutate(child2)
-            
+
             # Add to new population
             new_population.extend([child1, child2])
         
@@ -429,10 +247,10 @@ class GeneticAlgorithmDNA:
     
     def run(
         self, 
-        original_sequence: str, 
-        n_generations: int = 100,
+        dataloader, 
+        epochs: int = 10,
         verbose: bool = True
-    ) -> Tuple[DNASequenceIndividual, Dict]:
+    ) -> Tuple[DNASequencePerturber, Dict]:
         """
         Run the genetic algorithm
         
@@ -440,10 +258,9 @@ class GeneticAlgorithmDNA:
             best_individual: Best solution found
             history: Dictionary with evolution history
         """
-        sequence_length = len(original_sequence)
         
         # Initialize population
-        population = self.initialize_population(sequence_length)
+        population = self.initialize_population()
         
         # History tracking
         history = {
@@ -455,46 +272,41 @@ class GeneticAlgorithmDNA:
             'best_num_segments': []
         }
         
-        # Evolution loop
-        iterator = tqdm(range(n_generations), desc="Evolving") if verbose else range(n_generations)
-        
-        for generation in iterator:
-            # Evolve
-            population = self.evolve_generation(population, original_sequence)
+        for epoch in range(epochs):
+
+            pbar = tqdm(dataloader, desc="Evolution")
+            for sequences, _ in pbar:
+                population = self.evolve_generation(population, sequences)
             
-            # Track statistics
+
             best_ind = max(population, key=lambda ind: ind.fitness)
             avg_fitness = np.mean([ind.fitness for ind in population])
-            
-            continuity_score = best_ind.calculate_continuity_score()
-            num_segments = len(best_ind.get_continuous_segments())
-            
+
+            print(f"\nEpoch [{epoch+1}/{epochs}]")
+            print("\nGenetic Algorithm Status")
+            print(f"  Best Fitness:              {best_ind.fitness:.4f}")
+            print(f"  Average Fitness:           {avg_fitness:.4f}")
+            print(f"  Best Entropy Score:        {best_ind.entropy_score:.4f}")
+            print(f"  Best N Count:              {len(best_ind.n_positions)}")
+            print(f"  Best N Count Penalty:      {best_ind.n_count_penalty:.4f}")
+            print(f"  Best Continuity Penalty:   {best_ind.continuity_score:.4f}")
+
             history['best_fitness'].append(best_ind.fitness)
             history['avg_fitness'].append(avg_fitness)
             history['best_entropy'].append(best_ind.entropy_score)
             history['best_n_count'].append(len(best_ind.n_positions))
-            history['best_continuity'].append(continuity_score)
-            history['best_num_segments'].append(num_segments)
+            history['best_n_count_penalty'].append(best_ind.n_count_penalty)
+            history['best_continuity_penalty'].append(best_ind.continuity_score)
             
-            if verbose and generation % 10 == 0:
-                iterator.set_postfix({
-                    'best_fit': f'{best_ind.fitness:.4f}',
-                    'entropy': f'{best_ind.entropy_score:.4f}',
-                    'n_count': len(best_ind.n_positions),
-                    'segments': num_segments
-                })
-        
         # Return best individual
         best_individual = max(population, key=lambda ind: ind.fitness)
-        
         return best_individual, history
 
 
 def analyze_solution(
     model,
     original_sequence: str,
-    best_individual: DNASequenceIndividual,
-    device: str = 'cuda'
+    best_individual: DNASequencePerturber,
 ):
     """Analyze the best solution found"""
     print("\n" + "="*60)
